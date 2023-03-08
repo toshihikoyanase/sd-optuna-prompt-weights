@@ -1,31 +1,33 @@
+import math
 import os
+
 import gradio as gr
 
 import modules.processing
 import modules.scripts as scripts
+from modules import shared
 from modules.processing import process_images, Processed
 from modules.prompt_parser import parse_prompt_attention
 
 
-class Script(scripts.Script):
+class OptunaPromptWeightScript(scripts.Script):
     def __init__(self) -> None:
         super().__init__()
 
     def title(self) -> str:
-        return "Optuna"
+        return "Optuna prompt weights"
     
     def show(self, is_img2img) -> bool:
         return True
  
     def ui(self, is_img2img):
-        gr.Label()
-        n_trials_per_iter = gr.Slider(minimum=1, maximum=20, step=1, value=2, label="n_trials per iteration")
-        lower = gr.Slider(minimum=0.5, maximum=1, step=0.1, value=0.5, label="lower bound of suggestion")
-        upper = gr.Slider(minimum=1.0, maximum=2, step=0.1, value=2, label="upper bound of suggestion")
-        storage = gr.Textbox(placeholder="Input DB URL of storage.", value="sqlite:///optuna.db", label="storage")
-        study_name = gr.Textbox(placeholder="Name of study", label="study_name")
-        artifact_dir = gr.Textbox(placeholder="Path to artifact dir for Optuna dashboard", value="./artifact", label="artifact_dir")
-        excluded_keywords = gr.Textbox(placeholder="Keywords to be excluded for optuna. Comma separated.", label="excluded_keywords")
+        n_trials_per_iter = gr.Slider(minimum=1, maximum=20, step=1, value=2, label="Number of trials per iteration")
+        lower = gr.Slider(minimum=-2, maximum=0, step=0.1, value=-1, label="Lower bound of suggestion")
+        upper = gr.Slider(minimum=0, maximum=2, step=0.1, value=1, label="Upper bound of suggestion")
+        storage = gr.Textbox(placeholder="Input DB URL of storage.", value="sqlite:///optuna.db", label="Storage")
+        study_name = gr.Textbox(placeholder="Name of study", label="Study name")
+        artifact_dir = gr.Textbox(placeholder="Path to artifact dir for Optuna dashboard", value="./artifact", label="Artifact_dir")
+        excluded_keywords = gr.Textbox(placeholder="Keywords to be excluded for optuna. Comma separated.", label="Excluded keywords")
         return (n_trials_per_iter, lower, upper, storage, study_name, artifact_dir, excluded_keywords)
 
     def run(self, p, n_trials_per_iter, lower, upper, storage, study_name, artifact_dir, excluded_keywords):
@@ -33,8 +35,8 @@ class Script(scripts.Script):
 
         print("prompt", p.prompt)
         print("n_trials_per_iter: ", n_trials_per_iter)
-        print("storage: ", storage, type(storage))
-        print("study_name", study_name, type(study_name))
+        print("storage: ", storage)
+        print("study_name", study_name)
         import optuna
         from optuna.distributions import FloatDistribution
         from optuna_dashboard import ObjectiveChoiceWidget
@@ -75,7 +77,7 @@ class Script(scripts.Script):
         parse_result = parse_prompt_attention(original_prompt)
         print(f"prompt was pased as follows:", parse_result)
         default_params = {
-            f"{i}:{token}": weight
+            f"{i}:{token}": 0.0
             for i, (token, weight) in enumerate(parse_result)
             if weight != 1 and token not in ek
         }
@@ -98,14 +100,15 @@ class Script(scripts.Script):
                 if f"{i}:{token}" not in default_params:
                     suggested.append(token)
                     continue
-                new_weight = params[f"{i}:{token}"]
+                delta = params[f"{i}:{token}"]
+                new_weight = weight + delta
                 suggested.append(f"({token}:{new_weight})")
             new_prompt = " ".join(suggested)
             print(f"{original_prompt} --> {new_prompt}")
             all_prompts.append(new_prompt)
             trials.append(trial)
 
-        p.n_iter = len(all_prompts)
+        p.n_iter = math.ceil(len(all_prompts) / p.batch_size)
         print(f"Optuna trial will create {len(all_prompts)} images using a total of {p.n_iter} batches.")
         p.prompt = all_prompts
         p.seed = [int(p.seed) for _ in range(len(all_prompts))]
